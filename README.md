@@ -5,7 +5,7 @@ This repository demonstrates how to use **Ansible** with **LXD containers** as a
 ### Features:
 
 * 🔧 Uses a custom `lxd_manage` Ansible role to provision and configure LXC containers.
-* 🔐 Implements SSH **certificate-based authentication** for secure, scalable access to containers.
+* 🔐 Implements SSH **certificate-based authentication** for secure, scalable access to both containers and virtual machines.
 * 🧪 Replaces heavyweight VM workflows with a more efficient, container-based approach.
 * 🪄 Ideal for testing infrastructure automation, developing roles/playbooks, or running ephemeral environments.
 

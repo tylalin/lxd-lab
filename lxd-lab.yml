@@ -1,0 +1,161 @@
+---
+- name: Manage LXD lab
+  hosts: all
+  connection: local
+  gather_facts: false
+  roles:
+    - lxd_manage
+
+- name: Configure /etc/hosts for DNS name resolution
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Wait for SSH
+      wait_for_connection:
+        timeout: 180
+
+    - name: Render /etc/hosts from template to remote target(s)
+      template:
+        src: hosts.j2
+        dest: /etc/hosts
+        mode: 0644
+
+- name: Configure SSH CA
+  hosts: localhost
+  gather_facts: false
+  become: true
+  become_user: "{{ user }}"
+  tasks:
+  - name: Ensure CA key directory exists
+    file:
+      path: "{{ ssh_ca_dir }}"
+      state: directory
+      mode: 0700
+
+  - name: Generate SSH RSA key pair for CA if not present
+    openssh_keypair:
+      path: "{{ ssh_ca_dir }}/{{ ssh_ca_key_name }}"
+      comment: "{{ ssh_ca_key_comment }}"
+
+  - name: Create directory structure for all hosts
+    file:
+      path: "{{ ssh_ca_dir }}/{{ item }}"
+      state: directory
+      mode: 0755
+    loop: "{{ groups['all'] }}"
+
+  - name: Cleanup SSH CA directory upon destroy
+    file:
+      path: "{{ ssh_ca_dir }}"
+      state: absent
+    tags: [destroy, never]
+
+- name: Configure server-side for SSH certificate authentication
+  hosts: servers
+  gather_facts: false
+  tasks:
+    - name: Get ssh_host_rsa_key.pub from server
+      fetch:
+        src: "/etc/ssh/{{ host_key_name }}.pub"
+        dest: "{{ ssh_ca_dir }}/{{ inventory_hostname }}/"
+        flat: yes
+
+    - name: Copy CA public key to server
+      copy:
+        src: "{{ ssh_ca_dir }}/{{ ssh_ca_key_name }}.pub"
+        dest: "/etc/ssh/"
+        mode: 0644
+
+    - name: Sign SSH host key with CA private key
+      command: |
+        ssh-keygen -s {{ ssh_ca_key_name }}
+                   -I {{ inventory_hostname }}
+                   -V +52w
+                   -h
+                   -n {{ inventory_hostname }}.{{ domain }}
+                   {{ inventory_hostname }}/{{ host_key_name }}.pub
+      args:
+        chdir: "{{ ssh_ca_dir }}"
+        creates: "{{ ssh_ca_dir }}/{{ inventory_hostname }}/{{ host_crtkey }}"
+      delegate_to: localhost
+      become: true
+      become_user: "{{ user }}"
+
+    - name: Copy signed host public key to server
+      copy:
+        src: "{{ ssh_ca_dir }}/{{ inventory_hostname }}/{{ host_crtkey }}"
+        dest: "/etc/ssh/"
+        mode: 0644
+    
+    - name: Ensure SSH CA settings are in sshd_config
+      blockinfile:
+        path: /etc/ssh/sshd_config
+        block: |
+          HostKey /etc/ssh/{{ host_key_name }}
+          HostCertificate /etc/ssh/{{ host_crtkey }}
+          TrustedUserCAKeys /etc/ssh/{{ ssh_ca_key_name }}.pub
+        marker: "# {mark} ANSIBLE MANAGED SSH CA CONFIG"
+      notify: Restart SSH
+
+  handlers:
+    - name: Restart SSH 
+      systemd_service:
+        name: ssh
+        state: restarted
+        daemon_reload: true
+
+- name: Configure client-side for SSH certificate authentication
+  hosts: clients
+  gather_facts: false
+  tasks:
+    - name: Ensure .ssh directory exists for {{ user }}
+      file:
+        path: "/home/{{ user }}/.ssh"
+        state: directory
+        owner: "{{ user }}"
+        group: "{{ user }}"
+        mode: 0700
+
+    - name: Generate SSH RSA key pair for {{ user }} if not present
+      openssh_keypair:
+        path: "/home/{{ user }}/.ssh/{{ user_key_name }}"
+        owner: "{{ user }}"
+        group: "{{ user }}"
+        comment: "{{ user }}@{{ inventory_hostname }}"
+
+    - name: Get {{ user_key_name }}.pub from client
+      fetch:
+        src: "/home/{{ user }}/.ssh/{{ user_key_name }}.pub"
+        dest: "{{ ssh_ca_dir }}/{{ inventory_hostname }}/"
+        flat: yes
+
+    - name: Sign SSH user key with CA private key
+      command: |
+        ssh-keygen -s {{ ssh_ca_key_name }}
+                   -I {{ inventory_hostname }}
+                   -V +52w
+                   -n {{ user }}
+                   {{ inventory_hostname }}/{{ user_key_name }}.pub
+      args:
+        chdir: "{{ ssh_ca_dir }}"
+        creates: "{{ ssh_ca_dir }}/{{ inventory_hostname }}/{{ user_crtkey }}"
+      delegate_to: localhost
+      become: true
+      become_user: "{{ user }}"
+
+    - name: Copy signed user public key to client
+      copy:
+        src: "{{ ssh_ca_dir }}/{{ inventory_hostname }}/{{ user_crtkey }}"
+        dest: "/home/{{ user }}/.ssh/"
+        owner: "{{ user }}"
+        group: "{{ user }}"
+        mode: 0644
+
+    - name: Ensure CA public key is present in ssh_known_hosts
+      lineinfile:
+        path: /etc/ssh/ssh_known_hosts
+        create: yes
+        line: "@cert-authority *.{{ domain }} {{ lookup('file', lookup('env', 'HOME') + '/ca/homelab_ssh_ca.pub') }}"
+        state: present
+
+      

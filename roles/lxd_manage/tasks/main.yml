@@ -1,0 +1,33 @@
+---
+- name: Create LXD instance(s)
+  community.general.lxd_container:
+    name: "{{ inventory_hostname }}"
+    ignore_volatile_options: true
+    type: "{{ lxd_container_type | default('container') }}"
+    state: started
+    devices: "{{ lxd_container_devices }}"
+    config:
+      user.user-data: "{{ lookup('template', 'user-data.yml.j2') }}"
+    source:
+      type: image
+      mode: pull
+      server: "{{ lxd_image_src }}"
+      protocol: simplestreams
+      alias: "{{ lxd_image }}"
+    profiles: "{{ lxd_profiles | default([]) }}"
+    wait_for_ipv4_addresses: "{{ lxd_wait_for_ipv4 | default(true) }}"
+    timeout: "{{ lxd_timeout | default(120) }}"
+
+- name: Remove LXD instance(s)
+  community.general.lxd_container:
+    name: "{{ inventory_hostname }}"
+    state: absent
+    force_stop: true
+  tags: [destroy, never]
+
+- name: Update localhost /etc/hosts file for DNS name resolution
+  template:
+    src: hosts.j2
+    dest: /etc/hosts
+    mode: 0644
+  run_once: true
