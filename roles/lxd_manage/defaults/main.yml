@@ -2,12 +2,18 @@
 
 lxd_container_type: "{{ 'virtual-machine' if 'vms' in group_names else 'container' }}"
 lxd_image_src: "https://cloud-images.ubuntu.com/releases/"
-lxd_image: "24.04"
+lxd_image: "26.04"
 lxd_profiles: ["default"]
+lxd_protocol: simplestreams
 lxd_wait_for_ipv4: true
 lxd_timeout: 120
 lxd_ssh_user: tyla
 lxd_ssh_pubkey_file: "~/.ssh/id_ed25519.pub"
+
+lxd_limits_cpu: ~          # e.g. "2" or "0-1" (pinned cores)
+lxd_limits_memory: ~       # e.g. "2GiB"
+lxd_storage_pool: default  # storage pool the root disk lives on
+lxd_root_disk_size: ~      # e.g. "20GiB" — omit to use pool default
 
 lxd_container_devices:
   eth0:
